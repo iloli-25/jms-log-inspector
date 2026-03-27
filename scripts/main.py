@@ -18,6 +18,9 @@ SERVICES_LOCATIONS = [
     SCRIPT_DIR.parent / "references" / "services.json",
 ]
 
+TAIL_MAX_LINES = 500
+GREP_MAX_RESULTS = 200
+
 
 # ── 配置加载 ──────────────────────────────────────────
 
@@ -92,26 +95,62 @@ def disconnect(child):
         pass
 
 
+# ── 日志操作 ──────────────────────────────────────────
+
+def tail_log(child, log_path, lines):
+    lines = min(lines, TAIL_MAX_LINES)
+    return run_command(child, f"tail -n {lines} {log_path}")
+
+def grep_log(child, log_path, keyword, context=20):
+    # 只在最近5000行里搜，避免扫全文
+    cmd = (
+        f"tail -n 5000 {log_path} | "
+        f"grep -B 2 -A {context} -E '{keyword}' | "
+        f"tail -n {GREP_MAX_RESULTS}"
+    )
+    return run_command(child, cmd)
+
+
 # ── 入口 ──────────────────────────────────────────────
+
+def print_usage():
+    print("Usage:")
+    print("  python main.py <env> <service> [lines]")
+    print("  python main.py <env> <service> grep [keyword]")
+    print()
+    print("例如:")
+    print("  python main.py dev order              # tail 默认200行")
+    print("  python main.py dev order 500          # tail 指定行数（上限500）")
+    print("  python main.py dev order grep         # grep 默认关键词")
+    print('  python main.py dev order grep "NullPointerException"  # grep 指定关键词')
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python main.py <env> <service> [lines]")
-        print("例如:  python main.py dev order 200")
+        print_usage()
         sys.exit(1)
 
     env = sys.argv[1]
     service = sys.argv[2]
-    lines = int(sys.argv[3]) if len(sys.argv) > 3 else 200
+    mode = sys.argv[3] if len(sys.argv) > 3 else "tail"
 
     try:
         ip, log_path = resolve_service(env, service)
-        print(f"[*] 环境={env} 服务={service} IP={ip} 行数={lines}")
+
         child = connect(ip)
-        result = run_command(child, f"tail -n {lines} {log_path}")
+
+        if mode == "grep":
+            keyword = sys.argv[4] if len(sys.argv) > 4 else "Exception|ERROR"
+            print(f"[*] 环境={env} 服务={service} IP={ip} 模式=grep 关键词={keyword}")
+            result = grep_log(child, log_path, keyword)
+        else:
+            lines = min(int(mode), TAIL_MAX_LINES) if mode.isdigit() else 200
+            print(f"[*] 环境={env} 服务={service} IP={ip} 模式=tail 行数={lines}")
+            result = tail_log(child, log_path, lines)
+
         disconnect(child)
         print("\n" + "=" * 50)
-        print(result)
+        print(result if result else "未找到匹配内容")
+
     except pexpect.TIMEOUT as e:
         print(f"[TIMEOUT] SSH 会话超时: {e}")
         sys.exit(1)

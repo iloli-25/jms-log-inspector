@@ -1,0 +1,7 @@
+{
+  "host": "your-jumpserver-ip",
+  "port": 1234,
+  "user": "your-username",
+  "password": "your-password",
+  "mfa_secret": "your-totp-secret"
+}

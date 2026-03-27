@@ -1,0 +1,14 @@
+{
+  "dev": {
+    "service1": {
+      "ip": "your-ip",
+      "path": "/your/path/to/log"
+    },
+    "service2": {
+      "ip": "",
+      "path": ""
+    }
+  },
+  "prod": {
+  }
+}

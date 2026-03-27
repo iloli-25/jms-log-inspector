@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
     env = sys.argv[1]
     service = sys.argv[2]
-    lines = int(sys.argv[3]) if len(sys.argv) > 3 else 100
+    lines = int(sys.argv[3]) if len(sys.argv) > 3 else 200
 
     try:
         ip, log_path = resolve_service(env, service)

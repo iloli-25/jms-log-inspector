@@ -86,6 +86,8 @@ def connect(target_ip, dimensions=(50, 220)):
     time.sleep(0.5)
     child.send(f"{target_ip}\r")
     child.expect([r"❯", r"in ~", r"\$", r"#"], timeout=30)
+    child.sendline("stty -echo 2>/dev/null")
+    child.expect([r"❯", r"\$", r"#"], timeout=10)
     time.sleep(0.5)
     return child
 
@@ -118,10 +120,11 @@ def count_zip_files(child, log_path, file_keyword):
     log_dir = str(Path(log_path).parent)
     file_stem = Path(log_path).stem
     cmd = f"ls {log_dir}/{file_stem}*{file_keyword}*.zip 2>/dev/null | wc -l"
+    marker = "==COUNT_DONE=="
     child.sendcontrol('u')
     time.sleep(0.1)
-    child.sendline(cmd)
-    child.expect([r"❯", r"\$", r"#"], timeout=15)
+    child.sendline(f"{cmd}; echo '{marker}'")
+    child.expect(marker, timeout=15)
     raw = clean_ansi(child.before).strip()
     parts = raw.split("\n")
     try:
@@ -144,10 +147,11 @@ def zgrep_log(child, log_path, file_keyword, content_keyword, context=20):
         f"grep -B {context} -A {context} -E '{content_keyword}' {log_path} 2>/dev/null"
     )
 
+    marker = "==ZGREP_DONE=="
     child.sendcontrol('u')
     time.sleep(0.2)
-    child.sendline(f"{zip_cmd}; {log_cmd}")
-    child.expect([r"❯", r"\$", r"#"], timeout=120)
+    child.sendline(f"{zip_cmd}; {log_cmd}; echo '{marker}'")
+    child.expect(marker, timeout=120)
     return clean_ansi(child.before).strip()
 
 

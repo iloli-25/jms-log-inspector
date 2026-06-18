@@ -4,6 +4,7 @@ import re
 import time
 import sys
 import json
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -104,6 +105,14 @@ def disconnect(child):
         child.sendline("q")
     except Exception:
         pass
+
+
+def get_today_str():
+    return date.today().strftime("%Y-%m-%d")
+
+
+def is_date_str(s):
+    return bool(re.match(r'^\d{4}-\d{2}(?:-\d{2})?$', s))
 
 
 # ── 日志操作 ──────────────────────────────────────────
@@ -217,14 +226,18 @@ def print_usage():
     print("Usage:")
     print("  python main.py <env> <service> [lines]")
     print("  python main.py <env> <service> grep [keyword]")
-    print("  python main.py <env> <service> zgrep <file_keyword> [content_keyword]")
+    print("  python main.py <env> <service> zgrep [<file_keyword>|<content_keyword>]")
+    print("  python main.py <env> <service> zgrep -f <file_keyword> -c <content_keyword>")
     print()
     print("例如:")
     print("  python main.py dev order              # tail 默认200行")
     print("  python main.py dev order 500          # tail 指定行数（上限500）")
     print("  python main.py dev order grep         # grep 默认关键词")
     print('  python main.py dev order grep "NullPointerException"  # grep 指定关键词')
-    print('  python main.py prod qygcli zgrep 2026-06-18 "ERROR"  # 聚合zip+当前log')
+    print('  python main.py dev order zgrep              # 今天 + Exception|ERROR')
+    print('  python main.py dev order zgrep "Timeout"    # 今天 + Timeout')
+    print('  python main.py prod qygcli zgrep 2026-06-18 "ERROR"  # 指定日期+内容')
+    print('  python main.py prod qygcli zgrep -c "ERROR"           # 今天 + ERROR')
     print()
     print("多节点服务自动并行查所有实例")
 
@@ -242,8 +255,31 @@ if __name__ == "__main__":
 
         # ── zgrep 聚合模式 ──
         if mode == "zgrep":
-            file_keyword = sys.argv[4] if len(sys.argv) > 4 else ""
-            content_keyword = sys.argv[5] if len(sys.argv) > 5 else "Exception|ERROR"
+            extra = sys.argv[4:]
+            file_keyword = get_today_str()
+            content_keyword = "Exception|ERROR"
+
+            if len(extra) == 0:
+                pass
+            elif any(a.startswith('-') for a in extra):
+                i = 0
+                while i < len(extra):
+                    if extra[i] in ('-f', '--file') and i + 1 < len(extra):
+                        file_keyword = extra[i + 1]
+                        i += 2
+                    elif extra[i] in ('-c', '--content') and i + 1 < len(extra):
+                        content_keyword = extra[i + 1]
+                        i += 2
+                    else:
+                        i += 1
+            elif len(extra) == 1:
+                arg = extra[0]
+                if is_date_str(arg):
+                    file_keyword = arg
+                else:
+                    content_keyword = arg
+            else:
+                file_keyword, content_keyword = extra[0], extra[1]
             label = f"zgrep 文件={file_keyword or '*'} 关键词={content_keyword}"
 
             if len(instances) == 1:

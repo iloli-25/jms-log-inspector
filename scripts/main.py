@@ -4,6 +4,7 @@ import re
 import time
 import sys
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
@@ -49,7 +50,16 @@ def resolve_service(env, service):
             f"可选: {list(services[env].keys())}"
         )
     cfg = services[env][service]
-    return cfg["ip"], cfg["path"]
+    if "_group" in cfg:
+        names = cfg["_group"]
+        instances = []
+        for name in names:
+            if name not in services[env]:
+                raise ValueError(f"组 '{service}' 引用了不存在的实例 '{name}'")
+            entry = services[env][name]
+            instances.append((name, entry["ip"], entry["path"]))
+        return instances
+    return [(service, cfg["ip"], cfg["path"])]
 
 
 # ── 工具函数 ──────────────────────────────────────────
@@ -102,13 +112,45 @@ def tail_log(child, log_path, lines):
     return run_command(child, f"tail -n {lines} {log_path}")
 
 def grep_log(child, log_path, keyword, context=20):
-    # 只在最近5000行里搜，避免扫全文
     cmd = (
-        f"tail -n 5000 {log_path} | "
-        f"grep -B 2 -A {context} -E '{keyword}' | "
+        f"grep -B 2 -A {context} -E '{keyword}' {log_path} | "
         f"tail -n {GREP_MAX_RESULTS}"
     )
     return run_command(child, cmd)
+
+
+# ── 多节点并行执行 ───────────────────────────────────
+
+def _run_one(mode, name, ip, path, keyword):
+    try:
+        child = connect(ip)
+        if mode == "grep":
+            result = grep_log(child, path, keyword)
+        else:
+            lines = int(mode) if mode.isdigit() else 200
+            result = tail_log(child, path, lines)
+        disconnect(child)
+        return name, ip, result, None
+    except Exception as e:
+        return name, ip, "", str(e)
+
+def _run_parallel(mode, instances, keyword=None):
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [
+            pool.submit(_run_one, mode, n, ip, p, keyword)
+            for n, ip, p in instances
+        ]
+        first = True
+        for f in as_completed(futures):
+            name, ip, result, err = f.result()
+            if not first:
+                print()
+            first = False
+            print(f"=== {name} ({ip}) ===")
+            if err:
+                print(f"[ERROR] {err}")
+            else:
+                print(result if result else "未找到匹配内容")
 
 
 # ── 入口 ──────────────────────────────────────────────
@@ -123,6 +165,8 @@ def print_usage():
     print("  python main.py dev order 500          # tail 指定行数（上限500）")
     print("  python main.py dev order grep         # grep 默认关键词")
     print('  python main.py dev order grep "NullPointerException"  # grep 指定关键词')
+    print()
+    print("多节点服务（如 prod qygcli）自动并行查所有实例")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -134,22 +178,29 @@ if __name__ == "__main__":
     mode = sys.argv[3] if len(sys.argv) > 3 else "tail"
 
     try:
-        ip, log_path = resolve_service(env, service)
+        instances = resolve_service(env, service)
 
-        child = connect(ip)
+        if len(instances) == 1:
+            name, ip, path = instances[0]
 
-        if mode == "grep":
-            keyword = sys.argv[4] if len(sys.argv) > 4 else "Exception|ERROR"
-            print(f"[*] 环境={env} 服务={service} IP={ip} 模式=grep 关键词={keyword}")
-            result = grep_log(child, log_path, keyword)
+            child = connect(ip)
+
+            if mode == "grep":
+                keyword = sys.argv[4] if len(sys.argv) > 4 else "Exception|ERROR"
+                print(f"[*] 环境={env} 服务={name} IP={ip} 模式=grep 关键词={keyword}")
+                result = grep_log(child, path, keyword)
+            else:
+                lines = min(int(mode), TAIL_MAX_LINES) if mode.isdigit() else 200
+                print(f"[*] 环境={env} 服务={name} IP={ip} 模式=tail 行数={lines}")
+                result = tail_log(child, path, lines)
+
+            disconnect(child)
+            print("\n" + "=" * 50)
+            print(result if result else "未找到匹配内容")
         else:
-            lines = min(int(mode), TAIL_MAX_LINES) if mode.isdigit() else 200
-            print(f"[*] 环境={env} 服务={service} IP={ip} 模式=tail 行数={lines}")
-            result = tail_log(child, log_path, lines)
-
-        disconnect(child)
-        print("\n" + "=" * 50)
-        print(result if result else "未找到匹配内容")
+            print(f"[*] 环境={env} 服务={service} ({len(instances)}个实例)")
+            keyword = sys.argv[4] if len(sys.argv) > 4 else "Exception|ERROR" if mode == "grep" else None
+            _run_parallel(mode, instances, keyword)
 
     except pexpect.TIMEOUT as e:
         print(f"[TIMEOUT] SSH 会话超时: {e}")

@@ -31,6 +31,8 @@ pip install pexpect pyotp
   python scripts/main.py \<env\> \<service\> \[lines\]  
 * **Grep 模式** (精准捕获异常):  
   python scripts/main.py \<env\> \<service\> grep \[keyword\]
+* **多节点并行** (组别名自动并行查所有实例):  
+  python scripts/main.py prod my-service grep "ERROR|Exception"
 
 ## **🤖 如何在 AI Agent 中使用？**
 

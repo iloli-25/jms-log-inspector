@@ -10,5 +10,20 @@
     }
   },
   "prod": {
+    "my-service": {
+      "_group": ["my-service1", "my-service2", "my-service3"]
+    },
+    "my-service1": {
+      "ip": "192.168.1.1",
+      "path": "/home/user/logs/service/1/service.log"
+    },
+    "my-service2": {
+      "ip": "192.168.1.2",
+      "path": "/home/user/logs/service/2/service.log"
+    },
+    "my-service3": {
+      "ip": "192.168.1.2",
+      "path": "/home/user/logs/service/3/service.log"
+    }
   }
 }

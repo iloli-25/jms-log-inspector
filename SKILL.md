@@ -45,6 +45,18 @@ python <SKILL_PATH>/scripts/main.py <env> <service>
 python <SKILL_PATH>/scripts/main.py <env> <service> 500
 ```
 
+**注意：**
+- **正则语法：** 脚本底层使用 `grep -E`（扩展正则），keyword 直接作为正则表达式传入。
+  `|` 作为**或**运算符时**不要**转义，例如：
+  ```bash
+  python <SKILL_PATH>/scripts/main.py dev order grep "ERROR|Exception|Timeout"
+  ```
+- **多节点服务：** 部分服务（如 `prod` 环境的 `my-service`）有多个实例。
+  传入组名会自动并行查询所有实例，结果按 `=== 实例名 (IP) ===` 分组展示：
+  ```bash
+  python <SKILL_PATH>/scripts/main.py prod my-service grep "ERROR"
+  ```
+
 ### 3. 查询策略
 
 按以下顺序执行，**每步有结果就停止，不要继续往下**：

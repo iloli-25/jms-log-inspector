@@ -22,7 +22,6 @@ SERVICES_LOCATIONS = [
 TAIL_MAX_LINES = 500
 
 
-
 # ── 配置加载 ──────────────────────────────────────────
 
 def _load_json(locations, name):
@@ -115,14 +114,52 @@ def grep_log(child, log_path, keyword, context=20):
     cmd = f"grep -B 2 -A {context} -E '{keyword}' {log_path}"
     return run_command(child, cmd)
 
+def count_zip_files(child, log_path, file_keyword):
+    log_dir = str(Path(log_path).parent)
+    file_stem = Path(log_path).stem
+    cmd = f"ls {log_dir}/{file_stem}*{file_keyword}*.zip 2>/dev/null | wc -l"
+    child.sendcontrol('u')
+    time.sleep(0.1)
+    child.sendline(cmd)
+    child.expect([r"❯", r"\$", r"#"], timeout=15)
+    raw = clean_ansi(child.before).strip()
+    parts = raw.split("\n")
+    try:
+        return int(parts[-1].strip()) if parts else 0
+    except ValueError:
+        return 0
+
+def zgrep_log(child, log_path, file_keyword, content_keyword, context=20):
+    log_dir = str(Path(log_path).parent)
+    file_stem = Path(log_path).stem
+
+    zip_cmd = (
+        f"for f in {log_dir}/{file_stem}*{file_keyword}*.zip; do "
+        f"[ -f \"$f\" ] && echo \"=== $f ===\" && zcat \"$f\" | "
+        f"grep -B {context} -A {context} -E '{content_keyword}'; "
+        f"done 2>/dev/null"
+    )
+    log_cmd = (
+        f"echo '=== current log ===' && "
+        f"grep -B {context} -A {context} -E '{content_keyword}' {log_path} 2>/dev/null"
+    )
+
+    child.sendcontrol('u')
+    time.sleep(0.2)
+    child.sendline(f"{zip_cmd}; {log_cmd}")
+    child.expect([r"❯", r"\$", r"#"], timeout=120)
+    return clean_ansi(child.before).strip()
+
 
 # ── 多节点并行执行 ───────────────────────────────────
 
-def _run_one(mode, name, ip, path, keyword):
+def _run_one(mode, name, ip, path, keyword, file_keyword=None):
     try:
         child = connect(ip)
         if mode == "grep":
             result = grep_log(child, path, keyword)
+        elif mode == "zgrep":
+            result = zgrep_log(child, path, file_keyword or "", keyword or "Exception|ERROR")
         else:
             lines = int(mode) if mode.isdigit() else 200
             result = tail_log(child, path, lines)
@@ -131,10 +168,10 @@ def _run_one(mode, name, ip, path, keyword):
     except Exception as e:
         return name, ip, "", str(e)
 
-def _run_parallel(mode, instances, keyword=None):
+def _run_parallel(mode, instances, keyword=None, file_keyword=None):
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = [
-            pool.submit(_run_one, mode, n, ip, p, keyword)
+            pool.submit(_run_one, mode, n, ip, p, keyword, file_keyword)
             for n, ip, p in instances
         ]
         first = True
@@ -150,20 +187,42 @@ def _run_parallel(mode, instances, keyword=None):
                 print(result if result else "未找到匹配内容")
 
 
+# ── 聚合 zip 文件计数（并行多节点） ─────────────────
+
+def _count_on_instances(instances, file_keyword):
+    counts = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        def _count_one(name, ip, path):
+            try:
+                child = connect(ip)
+                c = count_zip_files(child, path, file_keyword)
+                disconnect(child)
+                return name, c
+            except Exception:
+                return name, 0
+        futures = [pool.submit(_count_one, n, ip, p) for n, ip, p in instances]
+        for f in as_completed(futures):
+            n, c = f.result()
+            counts[n] = c
+    return counts
+
+
 # ── 入口 ──────────────────────────────────────────────
 
 def print_usage():
     print("Usage:")
     print("  python main.py <env> <service> [lines]")
     print("  python main.py <env> <service> grep [keyword]")
+    print("  python main.py <env> <service> zgrep <file_keyword> [content_keyword]")
     print()
     print("例如:")
     print("  python main.py dev order              # tail 默认200行")
     print("  python main.py dev order 500          # tail 指定行数（上限500）")
     print("  python main.py dev order grep         # grep 默认关键词")
     print('  python main.py dev order grep "NullPointerException"  # grep 指定关键词')
+    print('  python main.py prod qygcli zgrep 2026-06-18 "ERROR"  # 聚合zip+当前log')
     print()
-    print("多节点服务（如 prod qygcli）自动并行查所有实例")
+    print("多节点服务自动并行查所有实例")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -177,9 +236,53 @@ if __name__ == "__main__":
     try:
         instances = resolve_service(env, service)
 
+        # ── zgrep 聚合模式 ──
+        if mode == "zgrep":
+            file_keyword = sys.argv[4] if len(sys.argv) > 4 else ""
+            content_keyword = sys.argv[5] if len(sys.argv) > 5 else "Exception|ERROR"
+            label = f"zgrep 文件={file_keyword or '*'} 关键词={content_keyword}"
+
+            if len(instances) == 1:
+                name, ip, path = instances[0]
+                print(f"[*] 环境={env} 服务={name} IP={ip} 模式={label}")
+                child = connect(ip)
+                c = count_zip_files(child, path, file_keyword)
+                disconnect(child)
+                if c > 10:
+                    try:
+                        ans = input(f"[!] 匹配到 {c} 个 zip 文件，输出可能很大，继续？(y/N): ").strip().lower()
+                        if ans != "y":
+                            print("已取消")
+                            sys.exit(0)
+                    except (EOFError, KeyboardInterrupt):
+                        print("已取消")
+                        sys.exit(0)
+                child = connect(ip)
+                result = zgrep_log(child, path, file_keyword, content_keyword)
+                disconnect(child)
+                print("\n" + "=" * 50)
+                print(result if result else "未找到匹配内容")
+            else:
+                print(f"[*] 环境={env} 服务={service} ({len(instances)}个实例) 模式={label}")
+                counts = _count_on_instances(instances, file_keyword)
+                total = sum(counts.values())
+                if total > 10:
+                    details = "  ".join(f"{n}={c}" for n, c in sorted(counts.items()))
+                    print(f"[!] 匹配到 {total} 个 zip 文件 ({details})，", end="")
+                    try:
+                        ans = input("输出可能很大，继续？(y/N): ").strip().lower()
+                        if ans != "y":
+                            print("已取消")
+                            sys.exit(0)
+                    except (EOFError, KeyboardInterrupt):
+                        print("已取消")
+                        sys.exit(0)
+                _run_parallel("zgrep", instances, content_keyword, file_keyword)
+            sys.exit(0)
+
+        # ── grep / tail 模式 ──
         if len(instances) == 1:
             name, ip, path = instances[0]
-
             child = connect(ip)
 
             if mode == "grep":

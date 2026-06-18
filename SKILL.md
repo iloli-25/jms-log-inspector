@@ -56,6 +56,13 @@ python <SKILL_PATH>/scripts/main.py <env> <service> 500
   ```bash
   python <SKILL_PATH>/scripts/main.py prod my-service grep "ERROR"
   ```
+- **zgrep 聚合模式：** 搜索历史分片 `.zip` + 当前 `.log`，按文件名关键词匹配：
+  ```bash
+  python <SKILL_PATH>/scripts/main.py <env> <service> zgrep <file_keyword> [content_keyword]
+  python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 "ERROR"
+  python <SKILL_PATH>/scripts/main.py prod my-service zgrep "" "Exception"
+  ```
+  不传 `file_keyword` 则匹配所有 `.zip` 文件。匹配超过 10 个 zip 时会询问确认。
 
 ### 3. 查询策略
 

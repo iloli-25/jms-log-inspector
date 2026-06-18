@@ -20,6 +20,10 @@ SERVICES_LOCATIONS = [
     SCRIPT_DIR.parent / "references" / "services.json",
 ]
 
+GREP_BEFORE = 2
+GREP_AFTER = 20
+ZGREP_BEFORE = 20
+ZGREP_AFTER = 20
 TAIL_MAX_LINES = 500
 
 
@@ -93,10 +97,11 @@ def connect(target_ip, dimensions=(50, 220)):
     return child
 
 def run_command(child, cmd):
+    marker = "==CMD_DONE=="
     child.sendcontrol('u')
     time.sleep(0.2)
-    child.sendline(cmd)
-    child.expect([r"❯", r"\$", r"#"], timeout=30)
+    child.sendline(f"{cmd}; echo '{marker}'")
+    child.expect(marker, timeout=30)
     return clean_ansi(child.before).strip()
 
 def disconnect(child):
@@ -121,8 +126,8 @@ def tail_log(child, log_path, lines):
     lines = min(lines, TAIL_MAX_LINES)
     return run_command(child, f"tail -n {lines} {log_path}")
 
-def grep_log(child, log_path, keyword, context=20):
-    cmd = f"grep -B 2 -A {context} -E '{keyword}' {log_path}"
+def grep_log(child, log_path, keyword, context_before=2, context_after=20):
+    cmd = f"grep -B {context_before} -A {context_after} -E '{keyword}' {log_path}"
     return run_command(child, cmd)
 
 def count_zip_files(child, log_path, file_keyword):
@@ -141,19 +146,19 @@ def count_zip_files(child, log_path, file_keyword):
     except ValueError:
         return 0
 
-def zgrep_log(child, log_path, file_keyword, content_keyword, context=20):
+def zgrep_log(child, log_path, file_keyword, content_keyword, context_before=20, context_after=20):
     log_dir = str(Path(log_path).parent)
     file_stem = Path(log_path).stem
 
     zip_cmd = (
         f"for f in {log_dir}/{file_stem}*{file_keyword}*.zip; do "
         f"[ -f \"$f\" ] && echo \"=== $f ===\" && zcat \"$f\" | "
-        f"grep -B {context} -A {context} -E '{content_keyword}'; "
+        f"grep -B {context_before} -A {context_after} -E '{content_keyword}'; "
         f"done 2>/dev/null"
     )
     log_cmd = (
         f"echo '=== current log ===' && "
-        f"grep -B {context} -A {context} -E '{content_keyword}' {log_path} 2>/dev/null"
+        f"grep -B {context_before} -A {context_after} -E '{content_keyword}' {log_path} 2>/dev/null"
     )
 
     marker = "==ZGREP_DONE=="
@@ -166,13 +171,15 @@ def zgrep_log(child, log_path, file_keyword, content_keyword, context=20):
 
 # ── 多节点并行执行 ───────────────────────────────────
 
-def _run_one(mode, name, ip, path, keyword, file_keyword=None):
+def _run_one(mode, name, ip, path, keyword, file_keyword=None,
+              context_before=20, context_after=20):
     try:
         child = connect(ip)
         if mode == "grep":
-            result = grep_log(child, path, keyword)
+            result = grep_log(child, path, keyword, context_before, context_after)
         elif mode == "zgrep":
-            result = zgrep_log(child, path, file_keyword or "", keyword or "Exception|ERROR")
+            result = zgrep_log(child, path, file_keyword or "", keyword or "Exception|ERROR",
+                               context_before, context_after)
         else:
             lines = int(mode) if mode.isdigit() else 200
             result = tail_log(child, path, lines)
@@ -181,10 +188,12 @@ def _run_one(mode, name, ip, path, keyword, file_keyword=None):
     except Exception as e:
         return name, ip, "", str(e)
 
-def _run_parallel(mode, instances, keyword=None, file_keyword=None):
+def _run_parallel(mode, instances, keyword=None, file_keyword=None,
+                   context_before=20, context_after=20):
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = [
-            pool.submit(_run_one, mode, n, ip, p, keyword, file_keyword)
+            pool.submit(_run_one, mode, n, ip, p, keyword, file_keyword,
+                        context_before, context_after)
             for n, ip, p in instances
         ]
         first = True
@@ -225,19 +234,21 @@ def _count_on_instances(instances, file_keyword):
 def print_usage():
     print("Usage:")
     print("  python main.py <env> <service> [lines]")
-    print("  python main.py <env> <service> grep [keyword]")
+    print("  python main.py <env> <service> grep [-A N] [-B N] [keyword]")
+    print("  python main.py <env> <service> zgrep [-f file] [-c keyword] [-A N] [-B N]")
     print("  python main.py <env> <service> zgrep [<file_keyword>|<content_keyword>]")
-    print("  python main.py <env> <service> zgrep -f <file_keyword> -c <content_keyword>")
+    print("  python main.py <env> <service> zgrep <file_keyword> <content_keyword>")
     print()
     print("例如:")
     print("  python main.py dev order              # tail 默认200行")
     print("  python main.py dev order 500          # tail 指定行数（上限500）")
     print("  python main.py dev order grep         # grep 默认关键词")
-    print('  python main.py dev order grep "NullPointerException"  # grep 指定关键词')
+    print('  python main.py dev order grep "NullPointerException"')
+    print('  python main.py dev order grep -A 10 -B 3 "Timeout"   # 自定义上下文')
     print('  python main.py dev order zgrep              # 今天 + Exception|ERROR')
     print('  python main.py dev order zgrep "Timeout"    # 今天 + Timeout')
-    print('  python main.py prod qygcli zgrep 2026-06-18 "ERROR"  # 指定日期+内容')
-    print('  python main.py prod qygcli zgrep -c "ERROR"           # 今天 + ERROR')
+    print('  python main.py prod qygcli zgrep 2026-06-18 "ERROR"')
+    print('  python main.py prod qygcli zgrep -c "ERROR" -A 10 -B 5')
     print()
     print("多节点服务自动并行查所有实例")
 
@@ -258,6 +269,8 @@ if __name__ == "__main__":
             extra = sys.argv[4:]
             file_keyword = get_today_str()
             content_keyword = "Exception|ERROR"
+            context_before = ZGREP_BEFORE
+            context_after = ZGREP_AFTER
 
             if len(extra) == 0:
                 pass
@@ -269,6 +282,12 @@ if __name__ == "__main__":
                         i += 2
                     elif extra[i] in ('-c', '--content') and i + 1 < len(extra):
                         content_keyword = extra[i + 1]
+                        i += 2
+                    elif extra[i] == '-A' and i + 1 < len(extra):
+                        context_after = int(extra[i + 1])
+                        i += 2
+                    elif extra[i] == '-B' and i + 1 < len(extra):
+                        context_before = int(extra[i + 1])
                         i += 2
                     else:
                         i += 1
@@ -298,7 +317,7 @@ if __name__ == "__main__":
                         print("已取消")
                         sys.exit(0)
                 child = connect(ip)
-                result = zgrep_log(child, path, file_keyword, content_keyword)
+                result = zgrep_log(child, path, file_keyword, content_keyword, context_before, context_after)
                 disconnect(child)
                 print("\n" + "=" * 50)
                 print(result if result else "未找到匹配内容")
@@ -317,7 +336,8 @@ if __name__ == "__main__":
                     except (EOFError, KeyboardInterrupt):
                         print("已取消")
                         sys.exit(0)
-                _run_parallel("zgrep", instances, content_keyword, file_keyword)
+                _run_parallel("zgrep", instances, content_keyword, file_keyword,
+                             context_before, context_after)
             sys.exit(0)
 
         # ── grep / tail 模式 ──
@@ -326,9 +346,26 @@ if __name__ == "__main__":
             child = connect(ip)
 
             if mode == "grep":
-                keyword = sys.argv[4] if len(sys.argv) > 4 else "Exception|ERROR"
+                extra = sys.argv[4:]
+                context_before = GREP_BEFORE
+                context_after = GREP_AFTER
+                keyword = "Exception|ERROR"
+                positionals = []
+                i = 0
+                while i < len(extra):
+                    if extra[i] == '-A' and i + 1 < len(extra):
+                        context_after = int(extra[i + 1])
+                        i += 2
+                    elif extra[i] == '-B' and i + 1 < len(extra):
+                        context_before = int(extra[i + 1])
+                        i += 2
+                    else:
+                        positionals.append(extra[i])
+                        i += 1
+                if positionals:
+                    keyword = positionals[0]
                 print(f"[*] 环境={env} 服务={name} IP={ip} 模式=grep 关键词={keyword}")
-                result = grep_log(child, path, keyword)
+                result = grep_log(child, path, keyword, context_before, context_after)
             else:
                 lines = min(int(mode), TAIL_MAX_LINES) if mode.isdigit() else 200
                 print(f"[*] 环境={env} 服务={name} IP={ip} 模式=tail 行数={lines}")
@@ -339,8 +376,26 @@ if __name__ == "__main__":
             print(result if result else "未找到匹配内容")
         else:
             print(f"[*] 环境={env} 服务={service} ({len(instances)}个实例)")
-            keyword = sys.argv[4] if len(sys.argv) > 4 else "Exception|ERROR" if mode == "grep" else None
-            _run_parallel(mode, instances, keyword)
+            context_before = GREP_BEFORE
+            context_after = GREP_AFTER
+            keyword = "Exception|ERROR" if mode == "grep" else None
+            if mode == "grep":
+                extra = sys.argv[4:]
+                positionals = []
+                i = 0
+                while i < len(extra):
+                    if extra[i] == '-A' and i + 1 < len(extra):
+                        context_after = int(extra[i + 1])
+                        i += 2
+                    elif extra[i] == '-B' and i + 1 < len(extra):
+                        context_before = int(extra[i + 1])
+                        i += 2
+                    else:
+                        positionals.append(extra[i])
+                        i += 1
+                if positionals:
+                    keyword = positionals[0]
+            _run_parallel(mode, instances, keyword, context_before=context_before, context_after=context_after)
 
     except pexpect.TIMEOUT as e:
         print(f"[TIMEOUT] SSH 会话超时: {e}")

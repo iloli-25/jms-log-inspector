@@ -20,7 +20,7 @@ SERVICES_LOCATIONS = [
 ]
 
 TAIL_MAX_LINES = 500
-GREP_MAX_RESULTS = 200
+
 
 
 # ── 配置加载 ──────────────────────────────────────────
@@ -112,10 +112,7 @@ def tail_log(child, log_path, lines):
     return run_command(child, f"tail -n {lines} {log_path}")
 
 def grep_log(child, log_path, keyword, context=20):
-    cmd = (
-        f"grep -B 2 -A {context} -E '{keyword}' {log_path} | "
-        f"tail -n {GREP_MAX_RESULTS}"
-    )
+    cmd = f"grep -B 2 -A {context} -E '{keyword}' {log_path}"
     return run_command(child, cmd)
 
 

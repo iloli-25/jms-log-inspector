@@ -4,9 +4,16 @@ import re
 import time
 import sys
 import json
+import random
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+
+def _mk_marker():
+    m = "%08x" % random.randrange(16**8)
+    hex_str = "".join(f"\\x{ord(c):02x}" for c in m)
+    return m, hex_str
 
 SCRIPT_DIR = Path(__file__).parent
 
@@ -81,7 +88,8 @@ def connect(target_ip, dimensions=(50, 220)):
     otp = pyotp.TOTP(cfg["mfa_secret"]).now()
     child = pexpect.spawn(
         f"ssh -p {cfg['port']} {cfg['user']}@{cfg['host']}",
-        encoding='utf-8', timeout=60, dimensions=dimensions
+        encoding='utf-8', timeout=60, dimensions=dimensions,
+        echo=False,
     )
     child.expect("[Pp]assword:", timeout=15)
     child.sendline(cfg["password"])
@@ -97,12 +105,16 @@ def connect(target_ip, dimensions=(50, 220)):
     return child
 
 def run_command(child, cmd):
-    marker = "==CMD_DONE=="
+    m, hex_str = _mk_marker()
     child.sendcontrol('u')
     time.sleep(0.2)
-    child.sendline(f"{cmd}; echo '{marker}'")
-    child.expect(marker, timeout=30)
-    return clean_ansi(child.before).strip()
+    child.sendline(f"m=$(printf '{hex_str}'); {cmd}; echo \"$m\"")
+    child.expect(m, timeout=30)
+    raw = clean_ansi(child.before).strip()
+    idx = raw.rfind(m)
+    if idx >= 0:
+        raw = raw[:idx].strip()
+    return raw
 
 def disconnect(child):
     try:
@@ -133,13 +145,15 @@ def grep_log(child, log_path, keyword, context_before=2, context_after=20):
 def count_zip_files(child, log_path, file_keyword):
     log_dir = str(Path(log_path).parent)
     file_stem = Path(log_path).stem
-    cmd = f"ls {log_dir}/{file_stem}*{file_keyword}*.zip 2>/dev/null | wc -l"
-    marker = "==COUNT_DONE=="
+    m, hex_str = _mk_marker()
     child.sendcontrol('u')
     time.sleep(0.1)
-    child.sendline(f"{cmd}; echo '{marker}'")
-    child.expect(marker, timeout=15)
+    child.sendline(f"m=$(printf '{hex_str}'); ls {log_dir}/{file_stem}*{file_keyword}*.zip 2>/dev/null | wc -l; echo \"$m\"")
+    child.expect(m, timeout=15)
     raw = clean_ansi(child.before).strip()
+    idx = raw.rfind(m)
+    if idx >= 0:
+        raw = raw[:idx].strip()
     parts = raw.split("\n")
     try:
         return int(parts[-1].strip()) if parts else 0
@@ -161,12 +175,16 @@ def zgrep_log(child, log_path, file_keyword, content_keyword, context_before=20,
         f"grep -B {context_before} -A {context_after} -E '{content_keyword}' {log_path} 2>/dev/null"
     )
 
-    marker = "==ZGREP_DONE=="
+    m, hex_str = _mk_marker()
     child.sendcontrol('u')
     time.sleep(0.2)
-    child.sendline(f"{zip_cmd}; {log_cmd}; echo '{marker}'")
-    child.expect(marker, timeout=120)
-    return clean_ansi(child.before).strip()
+    child.sendline(f"m=$(printf '{hex_str}'); {zip_cmd}; {log_cmd}; echo \"$m\"")
+    child.expect(m, timeout=120)
+    raw = clean_ansi(child.before).strip()
+    idx = raw.rfind(m)
+    if idx >= 0:
+        raw = raw[:idx].strip()
+    return raw
 
 
 # ── 多节点并行执行 ───────────────────────────────────

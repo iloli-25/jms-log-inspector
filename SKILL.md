@@ -13,8 +13,10 @@ description: 查日志、看报错、分析线上或开发环境服务异常。�
 |---|---|
 | 看最近日志 | `python <SKILL_PATH>/scripts/main.py dev order` |
 | 搜关键字 | `python <SKILL_PATH>/scripts/main.py dev order grep "ERROR"` |
+| 全文输出 | `python <SKILL_PATH>/scripts/main.py dev order grep ""` |
 | 多节点并行搜 | `python <SKILL_PATH>/scripts/main.py prod my-service grep "Exception"` |
 | 搜历史分片日志 | `python <SKILL_PATH>/scripts/main.py prod my-service zgrep "Timeout"` |
+| 历史分片全文 | `python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c ""` |
 | 查看有哪些服务 | 读 `references/services.json` |
 
 `<SKILL_PATH>` 即本 SKILL.md 所在目录，脚本在 `scripts/main.py`。
@@ -88,9 +90,10 @@ description: 查日志、看报错、分析线上或开发环境服务异常。�
 python <SKILL_PATH>/scripts/main.py <env> <service> grep [-A N] [-B N] [keyword]
 python <SKILL_PATH>/scripts/main.py <env> <service> grep "NullPointerException"
 python <SKILL_PATH>/scripts/main.py <env> <service> grep -A 10 -B 5 "Timeout"
+python <SKILL_PATH>/scripts/main.py <env> <service> grep ""    # 全文（不走 grep）
 ```
 
-不传 keyword 则默认搜索 `Exception|ERROR`。
+不传 keyword 则默认搜索 `Exception|ERROR`。传空字符串 `""` 则输出全部行（底层用 `cat`）。
 
 **tail 模式**（grep 无结果时使用）：
 ```bash
@@ -102,21 +105,24 @@ python <SKILL_PATH>/scripts/main.py <env> <service> 500
 **zgrep 聚合模式**（搜索历史分片 `.zip` + 当前 `.log`）：
 ```bash
 python <SKILL_PATH>/scripts/main.py <env> <service> zgrep [-f file] [-c keyword] [-A N] [-B N]
-python <SKILL_PATH>/scripts/main.py <env> <service> zgrep [<file_keyword>|<content_keyword>]
-python <SKILL_PATH>/scripts/main.py <env> <service> zgrep <file_keyword> <content_keyword>
+python <SKILL_PATH>/scripts/main.py <env> <service> zgrep [<file>] [<keyword>] [-A N] [-B N]
 python <SKILL_PATH>/scripts/main.py prod my-service zgrep              # 今天 + Exception|ERROR
 python <SKILL_PATH>/scripts/main.py prod my-service zgrep "Timeout"    # 今天 + Timeout
 python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 "ERROR"  # 指定日期+内容
+python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 -A 5 -B 5  # 混合：日期+上下文
 python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c "ERROR"           # 今天 + ERROR
 python <SKILL_PATH>/scripts/main.py prod my-service zgrep -f 2026-06-18        # 指定日期+默认内容
 python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c "Timeout" -A 5 -B 5  # 自定义上下文
+python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c ""           # 全文输出（无 grep）
+python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 -c ""  # 某天全文
 ```
 - **参数默认值：** `file_keyword` 默认今天日期（YYYY-MM-DD），`content_keyword` 默认 `Exception|ERROR`
+- **位置参数和 flags 可混用：** `zgrep 2026-06-18 -A 5 -B 5` 正确解析日期 + 上下文
 - **单参数自动识别：** `"2026-06-18"` 格式的视为日期（文件筛选），其他视为内容关键词
 - `-f / --file`、`-c / --content` 显式指定，可任意顺序
-- 传 `-f ""` 匹配所有 `.zip`
+- 传 `-f ""` 匹配所有 `.zip`，传 `-c ""` 输出全文（跳过 grep，用 cat/zcat）
 - 匹配超过 10 个 zip 时会先询问确认
-- **上下文行数：** zgrep 默认 `-B 20 -A 20`，grep 默认 `-B 2 -A 20`。传 `-A N -B N` 覆盖。
+- **上下文行数：** zgrep 默认 `-B 3 -A 15`，grep 默认 `-B 2 -A 10`。传 `-A N -B N` 覆盖。
 - **输出量警告：** zgrep 扫描大量压缩包（尤其是多节点 + 不限定日期）时输出可能非常大，匹配超过 10 个 zip 会自动提示确认。建议尽量缩小文件范围（指定日期或限单节点），或设 `-A 0 -B 0` 减少输出。
 
 **正则语法：** 脚本底层使用 `grep -E`（扩展正则），keyword 直接作为正则表达式传入。

@@ -172,29 +172,44 @@ def zgrep_log(child, log_path, file_keyword, content_keyword, context_before=20,
 
     if content_keyword:
         zip_pipe = f"zcat '{{}}' | grep -B {context_before} -A {context_after} -E '{content_keyword}'"
-        log_pipe = f"grep -B {context_before} -A {context_after} -E '{content_keyword}' {log_path} 2>/dev/null"
+        log_pipe = f"cat '{{}}' | grep -B {context_before} -A {context_after} -E '{content_keyword}'"
+        cur_pipe = f"grep -B {context_before} -A {context_after} -E '{content_keyword}' {log_path} 2>/dev/null"
     else:
         zip_pipe = "zcat '{}'"
-        log_pipe = f"cat {log_path} 2>/dev/null"
+        log_pipe = "cat '{}'"
+        cur_pipe = f"cat {log_path} 2>/dev/null"
 
     zip_cmd = (
         f"ls {log_dir}/{file_stem}*{file_keyword}*.zip 2>/dev/null "
+        f"| sort "
         f"| xargs -P 4 -I{{}} sh -c \"echo '=== {{}} ===' && {zip_pipe}\""
     )
+    hist_cmd = (
+        f"ls {log_dir}/{file_stem}*{file_keyword}*.log 2>/dev/null "
+        f"| grep -v '^{Path(log_path).name}$' "
+        f"| sort "
+        f"| xargs -P 4 -I{{}} sh -c \"echo '=== {{}} ===' && {log_pipe}\""
+    )
+
+    cmd_parts = [zip_cmd, hist_cmd]
+    if include_current:
+        cmd_parts.append(f"echo '=== current log ===' && {cur_pipe}")
 
     m, hex_str = _mk_marker()
+    full_cmd = "; ".join(cmd_parts)
     child.sendcontrol('u')
     time.sleep(0.2)
-    if include_current:
-        log_cmd = f"echo '=== current log ===' && {log_pipe}"
-        child.sendline(f"m=$(printf '{hex_str}'); {zip_cmd}; {log_cmd}; echo \"$m\"")
-    else:
-        child.sendline(f"m=$(printf '{hex_str}'); {zip_cmd}; echo \"$m\"")
+    child.sendline(
+        f"m=$(printf '{hex_str}'); "
+        f"echo '===START==='; "
+        f"{{ {full_cmd}; }} 2>/dev/null; "
+        f"echo \"$m\""
+    )
     child.expect(m, timeout=300)
     raw = clean_ansi(child.before).strip()
-    idx = raw.rfind(m)
+    idx = raw.rfind("===START===")
     if idx >= 0:
-        raw = raw[:idx].strip()
+        raw = raw[idx + len("===START==="):].strip()
     return raw
 
 

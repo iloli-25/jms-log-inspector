@@ -1,5 +1,7 @@
 config.json
 services.json
+references/config.json
+references/services.json
 __pycache__/
 *.pyc
 .DS_Store

@@ -151,7 +151,7 @@ def count_zip_files(child, log_path, file_keyword):
     m, hex_str = _mk_marker()
     child.sendcontrol('u')
     time.sleep(0.1)
-    child.sendline(f"m=$(printf '{hex_str}'); ls {log_dir}/{file_stem}*{file_keyword}*.zip 2>/dev/null | wc -l; echo \"$m\"")
+    child.sendline(f"m=$(printf '{hex_str}'); ls {log_dir}/{file_stem}*.zip 2>/dev/null | grep -E '{file_keyword}' | wc -l; echo \"$m\"")
     child.expect(m, timeout=15)
     raw = clean_ansi(child.before).strip()
     idx = raw.rfind(m)
@@ -168,7 +168,13 @@ def zgrep_log(child, log_path, file_keyword, content_keyword, context_before=20,
     file_stem = Path(log_path).stem
 
     today = get_today_str()
-    include_current = not file_keyword or today.startswith(file_keyword) or file_keyword.startswith(today)
+    if not file_keyword:
+        include_current = True
+    else:
+        try:
+            include_current = bool(re.search(file_keyword, today))
+        except re.error:
+            include_current = False
 
     if content_keyword:
         zip_pipe = f"zcat '{{}}' | grep -B {context_before} -A {context_after} -E '{content_keyword}'"
@@ -180,13 +186,15 @@ def zgrep_log(child, log_path, file_keyword, content_keyword, context_before=20,
         cur_pipe = f"cat {log_path} 2>/dev/null"
 
     zip_cmd = (
-        f"ls {log_dir}/{file_stem}*{file_keyword}*.zip 2>/dev/null "
+        f"ls {log_dir}/{file_stem}*.zip 2>/dev/null "
+        f"| grep -E '{file_keyword}' "
         f"| sort "
         f"| xargs -P 4 -I{{}} sh -c \"echo '=== {{}} ===' && {zip_pipe}\""
     )
     hist_cmd = (
-        f"ls {log_dir}/{file_stem}*{file_keyword}*.log 2>/dev/null "
+        f"ls {log_dir}/{file_stem}*.log 2>/dev/null "
         f"| grep -v '^{Path(log_path).name}$' "
+        f"| grep -E '{file_keyword}' "
         f"| sort "
         f"| xargs -P 4 -I{{}} sh -c \"echo '=== {{}} ===' && {log_pipe}\""
     )
@@ -230,6 +238,8 @@ def _run_one(mode, name, ip, path, keyword, file_keyword=None,
             result = tail_log(child, path, lines)
         disconnect(child)
         return name, ip, result, None
+    except pexpect.TIMEOUT:
+        return name, ip, "", "[TIMEOUT] SSH 命令超时（>30秒），文件可能过大，建议缩小搜索范围"
     except Exception as e:
         return name, ip, "", str(e)
 
@@ -408,6 +418,12 @@ if __name__ == "__main__":
                     elif extra[i] == '-B' and i + 1 < len(extra):
                         context_before = int(extra[i + 1])
                         i += 2
+                    elif extra[i] in ('-c', '--content') and i + 1 < len(extra):
+                        keyword = extra[i + 1]
+                        i += 2
+                    elif extra[i].startswith('-'):
+                        print(f"[WARN] grep 模式不支持 flag '{extra[i]}'，已忽略")
+                        i += 1
                     else:
                         positionals.append(extra[i])
                         i += 1
@@ -439,6 +455,12 @@ if __name__ == "__main__":
                     elif extra[i] == '-B' and i + 1 < len(extra):
                         context_before = int(extra[i + 1])
                         i += 2
+                    elif extra[i] in ('-c', '--content') and i + 1 < len(extra):
+                        keyword = extra[i + 1]
+                        i += 2
+                    elif extra[i].startswith('-'):
+                        print(f"[WARN] grep 模式不支持 flag '{extra[i]}'，已忽略")
+                        i += 1
                     else:
                         positionals.append(extra[i])
                         i += 1

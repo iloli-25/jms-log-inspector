@@ -11,15 +11,15 @@ description: 查日志、看报错、分析线上或开发环境服务异常。�
 
 | 场景 | 命令 |
 |---|---|
-| 看最近日志 | `python <SKILL_PATH>/scripts/main.py dev order` |
-| 搜关键字 | `python <SKILL_PATH>/scripts/main.py dev order grep "ERROR"` |
-| 全文输出 | `python <SKILL_PATH>/scripts/main.py dev order grep ""` |
-| 多节点并行搜 | `python <SKILL_PATH>/scripts/main.py prod my-service grep "Exception"` |
-| 搜历史分片日志 | `python <SKILL_PATH>/scripts/main.py prod my-service zgrep "Timeout"` |
-| 历史分片全文 | `python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c ""` |
+| 看最近日志 | `python <SKILL_PATH>/scripts/jlog.py dev order` |
+| 搜关键字 | `python <SKILL_PATH>/scripts/jlog.py dev order grep "ERROR"` |
+| 全文输出 | `python <SKILL_PATH>/scripts/jlog.py dev order grep ""` |
+| 多节点并行搜 | `python <SKILL_PATH>/scripts/jlog.py prod my-service grep "Exception"` |
+| 搜历史分片日志 | `python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep "Timeout"` |
+| 历史分片全文 | `python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep -c ""` |
 | 查看有哪些服务 | 读 `references/services.json` |
 
-`<SKILL_PATH>` 即本 SKILL.md 所在目录，脚本在 `scripts/main.py`。
+`<SKILL_PATH>` 即本 SKILL.md 所在目录，主脚本 `scripts/jlog.py`（替代原 `scripts/main.py`）。
 
 ## 工作流
 
@@ -87,40 +87,45 @@ description: 查日志、看报错、分析线上或开发环境服务异常。�
 
 **grep 模式**（优先使用，精准定位异常）：
 ```bash
-python <SKILL_PATH>/scripts/main.py <env> <service> grep [-A N] [-B N] [keyword]
-python <SKILL_PATH>/scripts/main.py <env> <service> grep "NullPointerException"
-python <SKILL_PATH>/scripts/main.py <env> <service> grep -A 10 -B 5 "Timeout"
-python <SKILL_PATH>/scripts/main.py <env> <service> grep ""    # 全文（不走 grep）
+python <SKILL_PATH>/scripts/jlog.py <env> <service> grep [-A N] [-B N] [keyword]
+python <SKILL_PATH>/scripts/jlog.py <env> <service> grep "NullPointerException"
+python <SKILL_PATH>/scripts/jlog.py <env> <service> grep -A 10 -B 5 "Timeout"
+python <SKILL_PATH>/scripts/jlog.py <env> <service> grep ""    # 全文（不走 grep）
 ```
 
 不传 keyword 则默认搜索 `Exception|ERROR`。传空字符串 `""` 则输出全部行（底层用 `cat`）。
 
 **tail 模式**（grep 无结果时使用）：
 ```bash
-python <SKILL_PATH>/scripts/main.py <env> <service>
-python <SKILL_PATH>/scripts/main.py <env> <service> 500
+python <SKILL_PATH>/scripts/jlog.py <env> <service>
+python <SKILL_PATH>/scripts/jlog.py <env> <service> 500
 ```
 默认 tail 100 行，最大 500 行。
 
 **zgrep 聚合模式**（搜索历史分片 `.zip` + 当前 `.log`）：
 ```bash
-python <SKILL_PATH>/scripts/main.py <env> <service> zgrep [-f file] [-c keyword] [-A N] [-B N]
-python <SKILL_PATH>/scripts/main.py <env> <service> zgrep [<file>] [<keyword>] [-A N] [-B N]
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep              # 今天 + Exception|ERROR
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep "Timeout"    # 今天 + Timeout
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 "ERROR"  # 指定日期+内容
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 -A 5 -B 5  # 混合：日期+上下文
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c "ERROR"           # 今天 + ERROR
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep -f 2026-06-18        # 指定日期+默认内容
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c "Timeout" -A 5 -B 5  # 自定义上下文
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep -c ""           # 全文输出（无 grep）
-python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 -c ""  # 某天全文
+python <SKILL_PATH>/scripts/jlog.py <env> <service> zgrep [-f file] [-c keyword] [-A N] [-B N]
+python <SKILL_PATH>/scripts/jlog.py <env> <service> zgrep [<file>] [<keyword>] [-A N] [-B N]
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep              # 今天 + Exception|ERROR
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep "Timeout"    # 今天 + Timeout
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep 2026-06-18 "ERROR"  # 指定日期+内容
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep 2026-06-18 -A 5 -B 5  # 混合：日期+上下文
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep -c "ERROR"           # 今天 + ERROR
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep -f 2026-06-18        # 指定日期+默认内容
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep -c "Timeout" -A 5 -B 5  # 自定义上下文
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep -c ""           # 全文输出（无 grep）
+python <SKILL_PATH>/scripts/jlog.py prod my-service zgrep 2026-06-18 -c ""  # 某天全文
 ```
 - **参数默认值：** `file_keyword` 默认今天日期（YYYY-MM-DD），`content_keyword` 默认 `Exception|ERROR`
 - **位置参数和 flags 可混用：** `zgrep 2026-06-18 -A 5 -B 5` 正确解析日期 + 上下文
 - **单参数自动识别：** `"2026-06-18"` 格式的视为日期（文件筛选），其他视为内容关键词
 - `-f / --file`、`-c / --content` 显式指定，可任意顺序
-- 传 `-f ""` 匹配所有 `.zip`，传 `-c ""` 输出全文（跳过 grep，用 cat/zcat）
+- **`-f` 支持正则表达式（grep -E 语法）**：
+  - `-f "2026-07"` 匹配整个 7 月
+  - `-f "2026-07-07|2026-07-09"` 匹配 7 号和 9 号
+  - `-f "2026-07-0[1-9]"` 匹配 7 月 1-9 日
+  - `-f ""` 匹配所有 `.zip`
+- 传 `-c ""` 输出全文（跳过 grep，用 cat/zcat）
 - 匹配超过 10 个 zip 时会先询问确认
 - **上下文行数：** zgrep 默认 `-B 3 -A 15`，grep 默认 `-B 2 -A 10`。传 `-A N -B N` 覆盖。
 - **输出量警告：** zgrep 扫描大量压缩包（尤其是多节点 + 不限定日期）时输出可能非常大，匹配超过 10 个 zip 会自动提示确认。建议尽量缩小文件范围（指定日期或限单节点），或设 `-A 0 -B 0` 减少输出。
@@ -128,7 +133,7 @@ python <SKILL_PATH>/scripts/main.py prod my-service zgrep 2026-06-18 -c ""  # �
 **正则语法：** 脚本底层使用 `grep -E`（扩展正则），keyword 直接作为正则表达式传入。
 `|` 作为**或**运算符时**不要**转义：
 ```bash
-python <SKILL_PATH>/scripts/main.py dev order grep "ERROR|Exception|Timeout"
+python <SKILL_PATH>/scripts/jlog.py dev order grep "ERROR|Exception|Timeout"
 ```
 
 **多节点输出格式：**
@@ -171,7 +176,7 @@ python <SKILL_PATH>/scripts/main.py dev order grep "ERROR|Exception|Timeout"
 
 按用户给出的服务顺序，从前往后逐个 grep，**找到异常就停止，不要继续查后面的服务**：
 ```bash
-python <SKILL_PATH>/scripts/main.py <env> <service> grep "ERROR|Exception"
+python <SKILL_PATH>/scripts/jlog.py <env> <service> grep "ERROR|Exception"
 ```
 
 ### 4. 输出分析结果
@@ -188,7 +193,7 @@ python <SKILL_PATH>/scripts/main.py <env> <service> grep "ERROR|Exception"
 ## 安全约束
 
 - **严禁**自行编写任何新的 Python 脚本或 shell 脚本
-- 所有远程操作必须且只能通过 `scripts/main.py` 执行
+- 所有远程操作必须且只能通过 `scripts/jlog.py` 执行
 - **禁止** tail 超过 500 行，脚本内部已做硬限制
 - **禁止**使用管道符在本地对脚本输出进行二次处理
 - **禁止**在没有明确指示的情况下查询其他服务的日志
@@ -223,6 +228,6 @@ python <SKILL_PATH>/scripts/main.py <env> <service> grep "ERROR|Exception"
 
 ## 资源定位
 
-- **脚本**：`scripts/main.py`
+- **主脚本**：`scripts/jlog.py`
 - **服务配置**：`references/services.json`
 - **堡垒机配置**：`references/config.json`
